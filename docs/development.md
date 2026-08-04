@@ -12,8 +12,6 @@
 - pytest；
 - 可绑定本地回环端口的本地环境。
 
-依赖中的 AWS-LC 可能需要可用的 C/C++ 编译器、CMake 和 `pkg-config`。具体安装命令取决于操作系统。
-
 ## 准备 Python 环境
 
 建议在虚拟环境中构建 Python 扩展：
@@ -171,6 +169,11 @@ python -m twine check --strict dist/*
 
 - `import libwsrx` 失败：确认已激活预期虚拟环境，然后重新执行 `maturin develop`。
 - 端口绑定失败：确认本地回环端口未被占用，且当前环境允许监听本地端口。
-- AWS-LC 构建失败：确认原生编译器、CMake 和 `pkg-config` 可供 Cargo 使用。
+- Linux Docker 验证：以下命令使用 `rust:1.91.1-bookworm`、只读 `/work` 绑定挂载和容器内的 `CARGO_TARGET_DIR`，依次运行 `cargo build --locked` 与 `cargo test --locked`，不会修改主机的 `target` 目录：
+
+  ```console
+  docker run --rm --platform linux/arm64 -v "$PWD:/work:ro" -w /work -e CARGO_TARGET_DIR=/tmp/libwsrx-target rust:1.91.1-bookworm cargo build --locked
+  docker run --rm --platform linux/arm64 -v "$PWD:/work:ro" -w /work -e CARGO_TARGET_DIR=/tmp/libwsrx-target rust:1.91.1-bookworm cargo test --locked
+  ```
 - `wss://` 证书验证失败：检查证书链、服务器主机名和系统信任根。
 - 服务端需要 TLS：高层服务端 API 接受原始 TCP 连接，应在其前方使用反向代理或其他 TLS 终止层。
