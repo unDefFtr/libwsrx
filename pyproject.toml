@@ -8,6 +8,8 @@ dynamic = ["version"]
 description = "TCP-over-WebSocket tunnel library for Rust and Python asyncio"
 requires-python = ">=3.9"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["asyncio", "pyo3", "rust", "tcp", "websocket"]
 classifiers = [
     "Development Status :: 3 - Alpha",
