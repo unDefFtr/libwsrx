@@ -18,7 +18,9 @@ def assert_value_error(**kwargs):
 
 
 def test_api_exports_and_config_contract():
-    assert {"Config", "WSRXError", "run_client", "run_server"} <= set(dir(libwsrx))
+    assert {"ClientEndpoint", "Config", "WSRXError", "run_client", "run_server"} <= set(
+        dir(libwsrx)
+    )
     assert issubclass(libwsrx.WSRXError, Exception)
 
     config = libwsrx.Config()
@@ -63,15 +65,18 @@ def reserve_loopback_port():
     return port
 
 
-async def wait_for_banner(local_port):
+async def wait_for_banner(local_addr, expected_banner):
+    host, port = local_addr.rsplit(":", 1)
     deadline = time.monotonic() + 5.0
     last_error = None
     while time.monotonic() < deadline:
         writer = None
         try:
-            reader, writer = await asyncio.open_connection("127.0.0.1", local_port)
-            banner = await asyncio.wait_for(reader.readexactly(len(BANNER)), 0.5)
-            if banner == BANNER:
+            reader, writer = await asyncio.open_connection(host, int(port))
+            banner = await asyncio.wait_for(
+                reader.readexactly(len(expected_banner)), 0.5
+            )
+            if banner == expected_banner:
                 return reader, writer
         except (ConnectionError, asyncio.IncompleteReadError, asyncio.TimeoutError) as error:
             last_error = error
@@ -80,6 +85,19 @@ async def wait_for_banner(local_port):
             await writer.wait_closed()
         await asyncio.sleep(0.02)
     raise AssertionError(f"endpoints did not become ready: {last_error!r}")
+
+
+async def assert_listener_closed(local_addr):
+    host, port = local_addr.rsplit(":", 1)
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, int(port)), 1.0
+        )
+    except ConnectionError:
+        return
+    writer.close()
+    await writer.wait_closed()
+    raise AssertionError(f"endpoint listener remained open: {local_addr}")
 
 
 async def cancel_and_assert(future):
@@ -123,7 +141,7 @@ async def exercise_asyncio_endpoints():
 
     writer = None
     try:
-        reader, writer = await wait_for_banner(local_port)
+        reader, writer = await wait_for_banner(f"127.0.0.1:{local_port}", BANNER)
         payload = bytes(range(256)) * 300 + b"\x00\xff\xfeEND"
         assert len(payload) > 65_536
         writer.write(payload)
@@ -150,4 +168,115 @@ async def exercise_asyncio_endpoints():
 
 def test_asyncio_client_and_server_end_to_end():
     asyncio.run(exercise_asyncio_endpoints())
+
+
+async def exercise_client_endpoints():
+    first_banner = b"FIRST\n"
+    second_banner = b"SECOND\n"
+
+    async def echo_with_banner(reader, writer, banner):
+        try:
+            writer.write(banner)
+            await writer.drain()
+            while chunk := await reader.read(32 * 1024):
+                writer.write(chunk)
+                await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    async def first_echo(reader, writer):
+        await echo_with_banner(reader, writer, first_banner)
+
+    async def second_echo(reader, writer):
+        await echo_with_banner(reader, writer, second_banner)
+
+    async def exchange(reader, writer, payload):
+        writer.write(payload)
+        await writer.drain()
+        echoed = await asyncio.wait_for(reader.readexactly(len(payload)), 2.0)
+        assert echoed == payload
+
+    first_target = await asyncio.start_server(first_echo, "127.0.0.1", 0)
+    second_target = await asyncio.start_server(second_echo, "127.0.0.1", 0)
+    first_target_port = first_target.sockets[0].getsockname()[1]
+    second_target_port = second_target.sockets[0].getsockname()[1]
+    first_websocket_port = reserve_loopback_port()
+    second_websocket_port = reserve_loopback_port()
+    first_url = f"ws://127.0.0.1:{first_websocket_port}"
+    second_url = f"ws://127.0.0.1:{second_websocket_port}"
+    server_futures = [
+        asyncio.ensure_future(
+            libwsrx.run_server(
+                f"127.0.0.1:{first_websocket_port}",
+                f"127.0.0.1:{first_target_port}",
+            )
+        ),
+        asyncio.ensure_future(
+            libwsrx.run_server(
+                f"127.0.0.1:{second_websocket_port}",
+                f"127.0.0.1:{second_target_port}",
+            )
+        ),
+    ]
+    endpoints = []
+    writers = []
+
+    try:
+        first_endpoint, second_endpoint = await asyncio.gather(
+            libwsrx.ClientEndpoint.bind("127.0.0.1:0", first_url),
+            libwsrx.ClientEndpoint.bind("127.0.0.1:0", second_url),
+        )
+        endpoints.extend((first_endpoint, second_endpoint))
+
+        assert first_endpoint.local_addr != second_endpoint.local_addr
+        assert int(first_endpoint.local_addr.rsplit(":", 1)[1]) != 0
+        assert int(second_endpoint.local_addr.rsplit(":", 1)[1]) != 0
+        assert first_endpoint.websocket_url == first_url
+        assert second_endpoint.websocket_url == second_url
+
+        first_connection, second_connection = await asyncio.gather(
+            wait_for_banner(first_endpoint.local_addr, first_banner),
+            wait_for_banner(second_endpoint.local_addr, second_banner),
+        )
+        first_reader, first_writer = first_connection
+        second_reader, second_writer = second_connection
+        writers.extend((first_writer, second_writer))
+
+        await asyncio.gather(
+            exchange(first_reader, first_writer, b"first-payload"),
+            exchange(second_reader, second_writer, b"second-payload"),
+        )
+
+        assert await first_endpoint.shutdown() is None
+        assert await first_endpoint.shutdown() is None
+        assert await asyncio.wait_for(first_reader.read(1), 1.0) == b""
+        await assert_listener_closed(first_endpoint.local_addr)
+
+        await exchange(second_reader, second_writer, b"second-still-live")
+        assert await second_endpoint.shutdown() is None
+        assert await asyncio.wait_for(second_reader.read(1), 1.0) == b""
+        await assert_listener_closed(second_endpoint.local_addr)
+
+        await asyncio.gather(*(cancel_and_assert(future) for future in server_futures))
+    finally:
+        await asyncio.gather(
+            *(endpoint.shutdown() for endpoint in endpoints), return_exceptions=True
+        )
+        for future in server_futures:
+            if not future.done():
+                future.cancel()
+        await asyncio.gather(*server_futures, return_exceptions=True)
+        for writer in writers:
+            writer.close()
+        await asyncio.gather(
+            *(writer.wait_closed() for writer in writers), return_exceptions=True
+        )
+        first_target.close()
+        second_target.close()
+        await asyncio.gather(first_target.wait_closed(), second_target.wait_closed())
+
+
+def test_client_endpoints_shut_down_independently():
+    asyncio.run(exercise_client_endpoints())
 
