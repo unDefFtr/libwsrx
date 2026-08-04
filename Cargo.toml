@@ -1,0 +1,22 @@
+[package]
+name = "libwsrx"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "libwsrx"
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+python = ["dep:pyo3", "dep:pyo3-async-runtimes", "pyo3/extension-module"]
+
+[dependencies]
+futures-util = { version = "0.3", features = ["sink"] }
+pyo3 = { version = "0.29", features = ["abi3-py39"], optional = true }
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "tls12"] }
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+tracing = "0.1"
