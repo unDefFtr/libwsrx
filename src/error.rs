@@ -7,6 +7,8 @@ pub enum Error {
 
     #[error("WebSocket error: {0}")]
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+    #[error("endpoint task failed: {0}")]
+    EndpointTask(#[from] tokio::task::JoinError),
 
     #[error("invalid configuration for {field}: {reason}")]
     InvalidConfig {

@@ -1,11 +1,95 @@
+use std::net::SocketAddr;
+
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{TcpListener, ToSocketAddrs},
+    sync::oneshot,
+    task::JoinHandle,
     time::timeout,
 };
 use tokio_tungstenite::connect_async_with_config;
 
-use crate::{Config, Error, Result, endpoint::serve_connections, relay};
+use crate::{
+    Config, Error, Result,
+    endpoint::{serve_connections, serve_connections_until},
+    relay,
+};
+pub struct ClientEndpoint {
+    local_addr: SocketAddr,
+    websocket_url: String,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    task: Option<JoinHandle<Result<()>>>,
+}
+
+impl ClientEndpoint {
+    pub async fn bind<A>(listen_addr: A, websocket_url: String, config: Config) -> Result<Self>
+    where
+        A: ToSocketAddrs,
+    {
+        config.validate()?;
+        let listener = TcpListener::bind(listen_addr).await?;
+        Self::start(listener, websocket_url, config)
+    }
+
+    pub fn start(listener: TcpListener, websocket_url: String, config: Config) -> Result<Self> {
+        config.validate()?;
+        let local_addr = listener.local_addr()?;
+        let max_concurrent_tunnels = config.max_concurrent_tunnels;
+        let endpoint_url = websocket_url.clone();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let task = tokio::spawn(serve_connections_until(
+            listener,
+            max_concurrent_tunnels,
+            async move {
+                let _ = shutdown_rx.await;
+            },
+            move |tcp| {
+                let websocket_url = websocket_url.clone();
+                let config = config.clone();
+                async move { connect(tcp, &websocket_url, &config).await }
+            },
+        ));
+
+        Ok(Self {
+            local_addr,
+            websocket_url: endpoint_url,
+            shutdown_tx: Some(shutdown_tx),
+            task: Some(task),
+        })
+    }
+
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    pub fn websocket_url(&self) -> &str {
+        &self.websocket_url
+    }
+
+    pub async fn shutdown(mut self) -> Result<()> {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+
+        let Some(task) = self.task.as_mut() else {
+            return Ok(());
+        };
+        let result = task.await?;
+        self.task.take();
+        result
+    }
+}
+
+impl Drop for ClientEndpoint {
+    fn drop(&mut self) {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
 
 pub async fn connect<T>(tcp: T, websocket_url: &str, config: &Config) -> Result<()>
 where
