@@ -130,7 +130,7 @@ impl PyClientEndpoint {
             if let Some(endpoint) = inner.lock().await.take() {
                 endpoint.shutdown().await.map_err(runtime_error)?;
             }
-            Ok(())
+            Ok(Python::attach(|py| py.None()))
         })
     }
 }
