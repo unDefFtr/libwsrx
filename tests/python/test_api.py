@@ -93,7 +93,7 @@ async def assert_listener_closed(local_addr):
         _, writer = await asyncio.wait_for(
             asyncio.open_connection(host, int(port)), 1.0
         )
-    except ConnectionError:
+    except (ConnectionError, asyncio.TimeoutError):
         return
     writer.close()
     await writer.wait_closed()

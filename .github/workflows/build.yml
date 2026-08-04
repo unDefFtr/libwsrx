@@ -45,6 +45,8 @@ jobs:
     strategy:
       matrix:
         target: [x86_64, aarch64]
+    env:
+      CFLAGS_aarch64_unknown_linux_gnu: -D__ARM_ARCH=8
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
