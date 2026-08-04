@@ -83,7 +83,7 @@ Local packaging uses `maturin build --locked --release --compatibility pypi --ou
 - `.github/workflows/build.yml`: per-push package matrix, installed-wheel tests, distribution validation, and build context.
 - `.github/workflows/release.yml`: exact-run artifact consumption, tag/SHA verification, GitHub Release creation, and trusted PyPI publishing.
 
-README and development-guide links to `core-connection-protocol.zh-CN.md` are currently stale; that file is absent. Do not assume undocumented protocol requirements from the broken link.
+- `docs/protocol.md`: core connection protocol covering data encoding, message boundaries, and connection lifecycle.
 
 ## Runtime/Tooling Preferences
 

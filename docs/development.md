@@ -1,6 +1,6 @@
 # 开发指南
 
-[README](../README.md) · [核心连接协议](../core-connection-protocol.zh-CN.md)
+[README](../README.md) · [核心连接协议](protocol.md)
 
 本文说明如何在本地构建、测试和检查 `libwsrx`。除非另有说明，命令都从仓库根目录执行。
 
@@ -114,7 +114,7 @@ python -m pytest tests/python
 | --- | --- |
 | Rust 公共 API 或 `Config` | README、Python 绑定（如适用）和对应测试。 |
 | Python API 或异常行为 | `src/python.rs`、`tests/python/test_api.py` 和 README。 |
-| 数据编码、消息处理或关闭语义 | `tests/relay.rs`、`tests/endpoints.rs` 和 [核心连接协议](../core-connection-protocol.zh-CN.md)。 |
+| 数据编码、消息处理或关闭语义 | `tests/relay.rs`、`tests/endpoints.rs` 和 [核心连接协议](protocol.md)。 |
 | TLS、超时或连接行为 | 端点测试和 README 的部署说明。 |
 
 所有公共入口都会校验 `Config`。新增入口必须保持这一约束。

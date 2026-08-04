@@ -1,8 +1,8 @@
 # WSRX 核心连接协议
 
-[README](README.md) · [开发指南](docs/development.md)
+[README](../README.md) · [开发指南](development.md)
 
-本文定义 WSRX 的数据面语义，即 TCP 字节如何经由 WebSocket 传输。Rust/Python API、超时、TLS 支持和具体错误请以 [README](README.md) 为准。
+本文定义 WSRX 的数据面语义，即 TCP 字节如何经由 WebSocket 传输。Rust/Python API、超时、TLS 支持和具体错误请以 [README](../README.md) 为准。
 
 ## 一句话说明
 

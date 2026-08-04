@@ -178,7 +178,7 @@ Rust 客户端可连接 `wss://`，使用系统原生根证书验证服务端。
 
 ## 延伸阅读
 
-- [核心连接协议](core-connection-protocol.zh-CN.md)：数据编码、消息边界和连接生命周期。
+- [核心连接协议](docs/protocol.md)：数据编码、消息边界和连接生命周期。
 - [开发指南](docs/development.md)：构建、测试、质量检查和本地打包。
 
 ## 许可证
