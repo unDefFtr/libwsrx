@@ -12,12 +12,12 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 const BANNER: &[u8] = b"BANNER\n";
 
-async fn start_echo_target(listener: TcpListener) {
+async fn start_echo_target(listener: TcpListener, banner: &'static [u8], tunnel_count: usize) {
     let mut tunnels = JoinSet::new();
-    for _ in 0..2 {
+    for _ in 0..tunnel_count {
         let (mut stream, _) = listener.accept().await.unwrap();
         tunnels.spawn(async move {
-            stream.write_all(BANNER).await.unwrap();
+            stream.write_all(banner).await.unwrap();
             let (mut read, mut write) = stream.into_split();
             tokio::io::copy(&mut read, &mut write).await.unwrap();
         });
@@ -25,16 +25,24 @@ async fn start_echo_target(listener: TcpListener) {
     while tunnels.join_next().await.is_some() {}
 }
 
-async fn exercise_source(mut stream: TcpStream, payload: Vec<u8>) -> TcpStream {
-    let mut banner = [0; BANNER.len()];
+async fn exercise_source(
+    mut stream: TcpStream,
+    expected_banner: &[u8],
+    payload: Vec<u8>,
+) -> TcpStream {
+    let mut banner = vec![0; expected_banner.len()];
     stream.read_exact(&mut banner).await.unwrap();
-    assert_eq!(banner, BANNER);
+    assert_eq!(banner, expected_banner);
 
-    stream.write_all(&payload).await.unwrap();
+    exchange_payload(&mut stream, &payload).await;
+    stream
+}
+
+async fn exchange_payload(stream: &mut TcpStream, payload: &[u8]) {
+    stream.write_all(payload).await.unwrap();
     let mut echoed = vec![0; payload.len()];
     stream.read_exact(&mut echoed).await.unwrap();
     assert_eq!(echoed, payload);
-    stream
 }
 
 #[tokio::test]
@@ -46,7 +54,7 @@ async fn serves_concurrent_isolated_full_duplex_tunnels_and_cancels_them() {
     let local_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local_addr = local_listener.local_addr().unwrap();
 
-    let target_task = tokio::spawn(start_echo_target(target_listener));
+    let target_task = tokio::spawn(start_echo_target(target_listener, BANNER, 2));
     let server_task = tokio::spawn(server::serve(
         websocket_listener,
         target_addr.to_string(),
@@ -67,8 +75,8 @@ async fn serves_concurrent_isolated_full_duplex_tunnels_and_cancels_them() {
 
     let (mut source_one, mut source_two) = tokio::time::timeout(TEST_TIMEOUT, async {
         tokio::join!(
-            exercise_source(source_one, payload_one),
-            exercise_source(source_two, payload_two),
+            exercise_source(source_one, BANNER, payload_one),
+            exercise_source(source_two, BANNER, payload_two),
         )
     })
     .await
@@ -97,6 +105,102 @@ async fn serves_concurrent_isolated_full_duplex_tunnels_and_cancels_them() {
 
     target_task.abort();
     let _ = target_task.await;
+}
+
+#[tokio::test]
+async fn client_endpoints_shut_down_independently() {
+    const FIRST_BANNER: &[u8] = b"FIRST\n";
+    const SECOND_BANNER: &[u8] = b"SECOND\n";
+
+    let first_target_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let first_target_addr = first_target_listener.local_addr().unwrap();
+    let second_target_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let second_target_addr = second_target_listener.local_addr().unwrap();
+    let first_websocket_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let first_websocket_addr = first_websocket_listener.local_addr().unwrap();
+    let second_websocket_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let second_websocket_addr = second_websocket_listener.local_addr().unwrap();
+
+    let first_target_task = tokio::spawn(start_echo_target(first_target_listener, FIRST_BANNER, 1));
+    let second_target_task =
+        tokio::spawn(start_echo_target(second_target_listener, SECOND_BANNER, 1));
+    let first_server_task = tokio::spawn(server::serve(
+        first_websocket_listener,
+        first_target_addr.to_string(),
+        Config::default(),
+    ));
+    let second_server_task = tokio::spawn(server::serve(
+        second_websocket_listener,
+        second_target_addr.to_string(),
+        Config::default(),
+    ));
+
+    let first_url = format!("ws://{first_websocket_addr}");
+    let second_url = format!("ws://{second_websocket_addr}");
+    let first_endpoint =
+        client::ClientEndpoint::bind("127.0.0.1:0", first_url.clone(), Config::default())
+            .await
+            .unwrap();
+    let second_endpoint =
+        client::ClientEndpoint::bind("127.0.0.1:0", second_url.clone(), Config::default())
+            .await
+            .unwrap();
+    let first_local_addr = first_endpoint.local_addr();
+    let second_local_addr = second_endpoint.local_addr();
+
+    assert_ne!(first_local_addr.port(), 0);
+    assert_ne!(second_local_addr.port(), 0);
+    assert_ne!(first_local_addr, second_local_addr);
+    assert_eq!(first_endpoint.websocket_url(), first_url);
+    assert_eq!(second_endpoint.websocket_url(), second_url);
+
+    let first_source = TcpStream::connect(first_local_addr).await.unwrap();
+    let second_source = TcpStream::connect(second_local_addr).await.unwrap();
+    let (mut first_source, mut second_source) = tokio::time::timeout(TEST_TIMEOUT, async {
+        tokio::join!(
+            exercise_source(first_source, FIRST_BANNER, b"first-payload".to_vec()),
+            exercise_source(second_source, SECOND_BANNER, b"second-payload".to_vec(),),
+        )
+    })
+    .await
+    .expect("independent tunnels timed out");
+
+    drop(first_endpoint);
+    let mut byte = [0];
+    assert_eq!(
+        tokio::time::timeout(TEST_TIMEOUT, first_source.read(&mut byte))
+            .await
+            .expect("first source did not close")
+            .unwrap(),
+        0
+    );
+    assert!(
+        tokio::time::timeout(TEST_TIMEOUT, TcpStream::connect(first_local_addr))
+            .await
+            .expect("first endpoint reconnect timed out")
+            .is_err()
+    );
+
+    exchange_payload(&mut second_source, b"second-still-live").await;
+    second_endpoint.shutdown().await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(TEST_TIMEOUT, second_source.read(&mut byte))
+            .await
+            .expect("second source did not close")
+            .unwrap(),
+        0
+    );
+
+    first_server_task.abort();
+    second_server_task.abort();
+    first_target_task.abort();
+    second_target_task.abort();
+    let _ = tokio::join!(
+        first_server_task,
+        second_server_task,
+        first_target_task,
+        second_target_task,
+    );
 }
 
 #[tokio::test]
