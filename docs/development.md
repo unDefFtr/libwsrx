@@ -123,12 +123,49 @@ python -m pytest tests/python
 
 ## 本地打包
 
-以下命令只生成本地构建产物，不会发布：
+以下命令只生成并校验本地发行包，不会上传：
 
 ```console
 cargo build --locked --release
-maturin build --release --out dist
+maturin build --locked --release --compatibility pypi --out dist
+maturin sdist --out dist
+python -m twine check --strict dist/*
 ```
+
+## 发布到 PyPI
+
+唯一发布入口是 GitHub Actions 的 `Publish to PyPI` 工作流。不要使用 API token 或手工运行 `twine upload`。
+
+首次发布前需要完成以下一次性设置：
+
+1. 在 GitHub 仓库中创建名为 `pypi` 的 Environment；自动发布不需要配置 secret 或必需的 reviewer。
+2. 当前 [PyPI JSON API](https://pypi.org/pypi/libwsrx/json) 对 `libwsrx` 返回 404。在 PyPI 账户的 Publishing 页面注册 pending Trusted Publisher，字段固定如下：
+
+   | 字段 | 值 |
+   | --- | --- |
+   | PyPI project name | `libwsrx` |
+   | GitHub owner | `unDefFtr` |
+   | GitHub repository name | `libwsrx` |
+   | Workflow name | `publish.yml` |
+   | Environment name | `pypi` |
+
+首次成功上传后，PyPI 会自动把 pending publisher 转为普通 publisher。如果项目已由当前维护者账户创建，则在项目的 Publishing 设置中添加字段相同的普通 publisher；如果名称已被无关账户占用，停止发布，不要擅自修改包名、导入名或工作流契约。
+
+每次发布按以下顺序操作：
+
+1. 修改 `Cargo.toml` 的 `[package].version`。
+2. 运行 `cargo check`，让 Cargo 刷新 `Cargo.lock` 中根包的版本。
+3. 运行 `cargo metadata --locked --no-deps`，确认清单与 lockfile 同步，然后提交 `Cargo.toml` 和 `Cargo.lock`。
+4. 可先在 GitHub Actions 页面手工运行 `Publish to PyPI`。手工运行只构建、测试和校验发行包，`publish` job 会跳过，不会上传。
+5. 准备正式发布时，从 `Cargo.toml` 读取版本并推送唯一标签：
+
+   ```console
+   VERSION="$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+   git tag "v$VERSION"
+   git push origin "v$VERSION"
+   ```
+
+工作流要求标签严格等于 `v` 加 Cargo 版本；任一平台构建、wheel 安装测试、源码发行包构建或发行包校验失败都会阻止上传。PyPI 版本不可覆盖，因此不要重复使用已经发布的版本号。
 
 ## 常见问题
 

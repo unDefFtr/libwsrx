@@ -1,0 +1,249 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Verify lock file is current
+        run: cargo metadata --locked --no-deps
+
+      - name: Verify tag matches Cargo version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+
+          with open("Cargo.toml", "rb") as cargo_toml:
+              version = tomllib.load(cargo_toml)["package"]["version"]
+
+          actual = os.environ["GITHUB_REF_NAME"]
+          expected = f"v{version}"
+          if actual != expected:
+              raise SystemExit(f"release tag {actual!r} must equal {expected!r}")
+          PY
+
+  linux:
+    needs: check-release
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.9"
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          target: ${{ matrix.target }}
+          manylinux: "2_17"
+          maturin-version: v1.14.1
+          rust-toolchain: stable
+          args: --release --locked --compatibility pypi --out dist
+
+      - name: Install test dependencies
+        if: matrix.target == 'x86_64'
+        run: python -m pip install pytest
+
+      - name: Install wheel
+        if: matrix.target == 'x86_64'
+        run: python -m pip install --no-index --find-links dist libwsrx
+
+      - name: Test installed wheel
+        if: matrix.target == 'x86_64'
+        run: python -m pytest tests/python
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-linux-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  macos:
+    needs: check-release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: x86_64
+          - runner: macos-latest
+            target: aarch64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.9"
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          target: ${{ matrix.target }}
+          maturin-version: v1.14.1
+          rust-toolchain: stable
+          args: --release --locked --compatibility pypi --out dist
+
+      - name: Install test dependencies
+        run: python -m pip install pytest
+
+      - name: Install wheel
+        run: python -m pip install --no-index --find-links dist libwsrx
+
+      - name: Test installed wheel
+        run: python -m pytest tests/python
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-macos-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  windows:
+    needs: check-release
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.9"
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          target: x64
+          maturin-version: v1.14.1
+          rust-toolchain: stable
+          args: --release --locked --compatibility pypi --out dist
+
+      - name: Install test dependencies
+        run: python -m pip install pytest
+
+      - name: Install wheel
+        run: python -m pip install --no-index --find-links dist libwsrx
+
+      - name: Test installed wheel
+        run: python -m pytest tests/python
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-windows-x64
+          path: dist/*.whl
+          if-no-files-found: error
+
+  sdist:
+    needs: check-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Build source distribution
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          command: sdist
+          maturin-version: v1.14.1
+          rust-toolchain: stable
+          args: --out dist
+
+      - name: Upload source distribution
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  validate:
+    needs: [linux, macos, windows, sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v7
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install Twine
+        run: python -m pip install twine==7.0.0
+
+      - name: Validate distribution metadata
+        run: python -m twine check --strict dist/*
+
+      - name: Verify distribution set
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          dist = Path("dist")
+          wheels = sorted(dist.glob("*.whl"))
+          sdists = sorted(dist.glob("*.tar.gz"))
+          expected = {*wheels, *sdists}
+          unexpected = sorted(path for path in dist.iterdir() if path not in expected)
+
+          if len(wheels) != 5 or len(sdists) != 1 or unexpected:
+              raise SystemExit(
+                  f"expected 5 wheels and 1 sdist; found "
+                  f"{len(wheels)} wheels, {len(sdists)} sdists, "
+                  f"unexpected files: {[path.name for path in unexpected]}"
+              )
+          PY
+
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/libwsrx
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v7
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

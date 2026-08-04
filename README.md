@@ -57,10 +57,10 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 项目要求 Python 3.9 或更新版本。在仓库根目录执行：
 
 ```console
-python -m pip install .
+python -m pip install libwsrx
 ```
 
-这会从当前源码构建原生扩展。开发环境的完整准备方式见[开发指南](docs/development.md)。本仓库未声明 crates.io 或 PyPI 发布渠道。
+这会安装预构建的原生扩展；如果当前平台没有可用的 wheel，pip 会从源码构建。开发环境从当前源码安装的完整准备方式见[开发指南](docs/development.md)。Rust crate 目前不发布到 crates.io。
 
 ## 五分钟验证
 
