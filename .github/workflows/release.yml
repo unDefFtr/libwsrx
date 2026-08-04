@@ -1,0 +1,167 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      eligible: ${{ steps.context.outputs.eligible }}
+      release_tag: ${{ steps.context.outputs.release_tag }}
+      release_sha: ${{ steps.context.outputs.release_sha }}
+    steps:
+      - name: Download build context
+        uses: actions/download-artifact@v7
+        with:
+          name: build-context
+          path: build-context
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Validate build context
+        id: context
+        env:
+          WORKFLOW_RUN_EVENT: ${{ github.event.workflow_run.event }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import uuid
+          from pathlib import Path
+
+          expected_fields = {"event_name", "ref", "ref_name", "ref_type", "sha"}
+          try:
+              context = json.loads(Path("build-context/build-context.json").read_text(encoding="utf-8"))
+          except (OSError, UnicodeError, json.JSONDecodeError) as error:
+              raise SystemExit(f"invalid build context: {error}") from error
+
+          if not isinstance(context, dict) or set(context) != expected_fields:
+              raise SystemExit("build context must contain exactly the expected fields")
+          if any(not isinstance(value, str) for value in context.values()):
+              raise SystemExit("build context values must all be strings")
+          if context["event_name"] != os.environ["WORKFLOW_RUN_EVENT"]:
+              raise SystemExit("build context event does not match workflow run")
+          if context["sha"] != os.environ["WORKFLOW_RUN_HEAD_SHA"]:
+              raise SystemExit("build context SHA does not match workflow run")
+
+          eligible = (
+              context["event_name"] == "push"
+              and context["ref_type"] == "tag"
+              and context["ref"] == f"refs/tags/{context['ref_name']}"
+              and context["ref_name"].startswith("v")
+          )
+
+          outputs = {"eligible": str(eligible).lower()}
+          if eligible:
+              outputs["release_tag"] = context["ref_name"]
+              outputs["release_sha"] = context["sha"]
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              for name, value in outputs.items():
+                  delimiter = f"ghadelimiter_{uuid.uuid4().hex}"
+                  output.write(f"{name}<<{delimiter}\n{value}\n{delimiter}\n")
+          PY
+
+      - name: Check out release commit
+        if: steps.context.outputs.eligible == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.context.outputs.release_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Verify release tag identity
+        if: steps.context.outputs.eligible == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.context.outputs.release_tag }}
+          RELEASE_SHA: ${{ steps.context.outputs.release_sha }}
+        run: test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$RELEASE_SHA"
+
+  release:
+    if: needs.prepare.outputs.eligible == 'true'
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_SHA }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
+        with:
+          version: v2.13.1
+          config: cliff.toml
+          args: --current --strip header --no-exec --output RELEASE_NOTES.md
+
+      - name: Verify release notes
+        run: |
+          test -s RELEASE_NOTES.md
+          grep -Fq "## ${RELEASE_TAG}" RELEASE_NOTES.md
+
+      - name: Download distributions
+        uses: actions/download-artifact@v7
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ env.RELEASE_SHA }}
+          body_path: RELEASE_NOTES.md
+          fail_on_unmatched_files: true
+          files: dist/*
+
+  publish:
+    if: needs.prepare.outputs.eligible == 'true'
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/libwsrx
+    permissions:
+      actions: read
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v7
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Publish distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/

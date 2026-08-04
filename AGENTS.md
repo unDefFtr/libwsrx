@@ -19,7 +19,7 @@ Configuration and state are explicit and endpoint-local. There is no global muta
 - `src/`: Rust library implementation and feature-gated Python bindings.
 - `tests/`: Rust integration tests (`relay.rs`, `endpoints.rs`) and Python API/lifecycle tests under `tests/python/`.
 - `docs/`: maintainer workflow; `docs/development.md` is the effective contribution guide.
-- `.github/workflows/`: release-only wheel/sdist build, validation, and PyPI publishing automation.
+- `.github/workflows/`: per-push wheel/sdist build and validation, plus tag-gated GitHub Release and trusted PyPI publishing automation.
 - `target/`, `dist/`, `.venv/`: generated local artifacts; keep them untracked.
 
 ## Development Commands
@@ -80,7 +80,8 @@ Local packaging uses `maturin build --locked --release --compatibility pypi --ou
 - `Cargo.toml` / `Cargo.lock`: Rust package, features, dependencies, and locked versions.
 - `pyproject.toml`: Maturin/Python packaging contract.
 - `docs/development.md`: canonical development, QA, packaging, and release procedure.
-- `.github/workflows/publish.yml`: tag/version checks and trusted PyPI release path.
+- `.github/workflows/build.yml`: per-push package matrix, installed-wheel tests, distribution validation, and build context.
+- `.github/workflows/release.yml`: exact-run artifact consumption, tag/SHA verification, GitHub Release creation, and trusted PyPI publishing.
 
 README and development-guide links to `core-connection-protocol.zh-CN.md` are currently stale; that file is absent. Do not assume undocumented protocol requirements from the broken link.
 
@@ -92,7 +93,7 @@ README and development-guide links to `core-connection-protocol.zh-CN.md` are cu
 - Python extensions must be built with Maturin `>=1.9.4,<2.0`; `maturin develop` enables Cargo feature `python`. Plain `cargo build` does not build/install Python bindings.
 - Rustfmt and Clippy use defaults; no repository-specific formatter/linter configuration exists.
 - AWS-LC builds may require a C/C++ compiler, CMake, and `pkg-config`.
-- There is no Make/Just/task runner, Python lockfile, pre-commit setup, or general branch/PR CI workflow.
+- There is no Make/Just/task runner, Python lockfile, pre-commit setup, or separate `pull_request` workflow. Per-push packaging CI runs through `build.yml`.
 
 ## Testing & QA
 
@@ -109,4 +110,4 @@ README and development-guide links to `core-connection-protocol.zh-CN.md` are cu
 - Use the repository’s observed concise Conventional Commit style: `feat: ...`, `fix: ...`, `test: ...`, `docs: ...`, `refactor: ...`, `chore: ...`, or `ci: ...`.
 - Keep commits focused and include only files changed for that modification; never absorb unrelated working-tree changes.
 - For a release version bump, update `Cargo.toml`, run `cargo check` to refresh `Cargo.lock`, verify with `cargo metadata --locked --no-deps`, and commit both files together.
-- Release tags must be unique and exactly `v<version>` matching `Cargo.toml`. Publish only through `.github/workflows/publish.yml`; do not manually upload with Twine or an API token.
+- Release tags must be unique and exactly `v<version>` matching `Cargo.toml`. Publish only through `.github/workflows/release.yml`, after its triggering `.github/workflows/build.yml` run succeeds; do not manually create/run a Release or upload with Twine or an API token.

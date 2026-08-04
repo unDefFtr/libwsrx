@@ -132,7 +132,7 @@ python -m twine check --strict dist/*
 
 ## 发布
 
-唯一发布入口是 GitHub Actions 的 `Publish Release` 工作流。Tag 触发后，工作流会构建并校验所有发行包、根据 `cliff.toml` 生成修改日志、创建 GitHub Release 并发布到 PyPI。不要手工创建 Release，也不要使用 API token 或手工运行 `twine upload`。
+每次 Push（分支和 Tag）都会触发 GitHub Actions 的 `Build` 工作流，构建并严格校验 5 个 wheel 和 1 个 sdist。成功的 Build 随后触发 `Release`：它读取该次 Build 的事件、引用和 SHA；只有严格匹配 Cargo 版本的 `v*` Tag Push 才会从该 Build 的精确 run ID 下载发行包、根据 `cliff.toml` 生成修改日志、创建 GitHub Release 并发布到 PyPI。Release 不会重新构建。不要手工创建或运行 Release，也不要使用 API token 或手工运行 `twine upload`。
 
 首次发布前需要完成以下一次性设置：
 
@@ -144,7 +144,7 @@ python -m twine check --strict dist/*
    | PyPI project name | `libwsrx` |
    | GitHub owner | `unDefFtr` |
    | GitHub repository name | `libwsrx` |
-   | Workflow name | `publish.yml` |
+   | Workflow name | `release.yml` |
    | Environment name | `pypi` |
 
 首次成功上传后，PyPI 会自动把 pending publisher 转为普通 publisher。如果项目已由当前维护者账户创建，则在项目的 Publishing 设置中添加字段相同的普通 publisher；如果名称已被无关账户占用，停止发布，不要擅自修改包名、导入名或工作流契约。
@@ -154,7 +154,7 @@ python -m twine check --strict dist/*
 1. 修改 `Cargo.toml` 的 `[package].version`。
 2. 运行 `cargo check`，让 Cargo 刷新 `Cargo.lock` 中根包的版本。
 3. 运行 `cargo metadata --locked --no-deps`，确认清单与 lockfile 同步，然后提交 `Cargo.toml` 和 `Cargo.lock`。
-4. 可先在 GitHub Actions 页面手工运行 `Publish Release`。手工运行只构建、测试和校验发行包，`release` 和 `publish` job 都会跳过，不会创建 GitHub Release 或上传到 PyPI。
+4. 每次提交 Push 后都会自动运行 `Build`。也可先在 GitHub Actions 页面手工运行 `Build`，对所选提交执行相同的构建、安装测试和校验；其后触发的 `Release` 会因事件类型为 `workflow_dispatch` 而跳过 `release` 和 `publish` job，不会创建 GitHub Release 或上传到 PyPI。
 5. 准备正式发布时，从 `Cargo.toml` 读取版本并推送唯一标签：
 
    ```console
@@ -163,7 +163,7 @@ python -m twine check --strict dist/*
    git push origin "v$VERSION"
    ```
 
-工作流要求标签严格等于 `v` 加 Cargo 版本；任一平台构建、wheel 安装测试、源码发行包构建或发行包校验失败都会阻止发布。成功后，GitHub Release 会包含 git-cliff 生成的修改日志以及 5 个 wheel 和 1 个 sdist。PyPI 版本和 Git Tag 均不可覆盖，因此不要重复使用已经发布的版本号。
+Tag Push 对应的 `Build` 要求标签严格等于 `v` 加 Cargo 版本；任一平台构建、wheel 安装测试、源码发行包构建或发行包校验失败都会阻止 `build-context` 上传和后续发布。成功后，`Release` 只消费该次成功 Tag Build 的 5 个 wheel 和 1 个 sdist；GitHub Release 会包含这些发行包和 git-cliff 生成的修改日志，PyPI 会收到同一组文件。PyPI 版本和 Git Tag 均不可覆盖，因此不要重复使用已经发布的版本号。
 
 ## 常见问题
 
