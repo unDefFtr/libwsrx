@@ -1,4 +1,4 @@
-name: Publish to PyPI
+name: Publish Release
 
 on:
   push:
@@ -225,6 +225,46 @@ jobs:
                   f"unexpected files: {[path.name for path in unexpected]}"
               )
           PY
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
+        with:
+          version: v2.13.1
+          config: cliff.toml
+          args: --current --strip header --no-exec --output RELEASE_NOTES.md
+
+      - name: Verify release notes
+        run: |
+          test -s RELEASE_NOTES.md
+          grep -Fq "## ${GITHUB_REF_NAME}" RELEASE_NOTES.md
+
+      - name: Download distributions
+        uses: actions/download-artifact@v7
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          body_path: RELEASE_NOTES.md
+          fail_on_unmatched_files: true
+          files: dist/*
 
   publish:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')

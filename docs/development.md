@@ -132,9 +132,9 @@ maturin sdist --out dist
 python -m twine check --strict dist/*
 ```
 
-## 发布到 PyPI
+## 发布
 
-唯一发布入口是 GitHub Actions 的 `Publish to PyPI` 工作流。不要使用 API token 或手工运行 `twine upload`。
+唯一发布入口是 GitHub Actions 的 `Publish Release` 工作流。Tag 触发后，工作流会构建并校验所有发行包、根据 `cliff.toml` 生成修改日志、创建 GitHub Release 并发布到 PyPI。不要手工创建 Release，也不要使用 API token 或手工运行 `twine upload`。
 
 首次发布前需要完成以下一次性设置：
 
@@ -156,7 +156,7 @@ python -m twine check --strict dist/*
 1. 修改 `Cargo.toml` 的 `[package].version`。
 2. 运行 `cargo check`，让 Cargo 刷新 `Cargo.lock` 中根包的版本。
 3. 运行 `cargo metadata --locked --no-deps`，确认清单与 lockfile 同步，然后提交 `Cargo.toml` 和 `Cargo.lock`。
-4. 可先在 GitHub Actions 页面手工运行 `Publish to PyPI`。手工运行只构建、测试和校验发行包，`publish` job 会跳过，不会上传。
+4. 可先在 GitHub Actions 页面手工运行 `Publish Release`。手工运行只构建、测试和校验发行包，`release` 和 `publish` job 都会跳过，不会创建 GitHub Release 或上传到 PyPI。
 5. 准备正式发布时，从 `Cargo.toml` 读取版本并推送唯一标签：
 
    ```console
@@ -165,7 +165,7 @@ python -m twine check --strict dist/*
    git push origin "v$VERSION"
    ```
 
-工作流要求标签严格等于 `v` 加 Cargo 版本；任一平台构建、wheel 安装测试、源码发行包构建或发行包校验失败都会阻止上传。PyPI 版本不可覆盖，因此不要重复使用已经发布的版本号。
+工作流要求标签严格等于 `v` 加 Cargo 版本；任一平台构建、wheel 安装测试、源码发行包构建或发行包校验失败都会阻止发布。成功后，GitHub Release 会包含 git-cliff 生成的修改日志以及 5 个 wheel 和 1 个 sdist。PyPI 版本和 Git Tag 均不可覆盖，因此不要重复使用已经发布的版本号。
 
 ## 常见问题
 
