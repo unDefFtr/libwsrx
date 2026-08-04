@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use pyo3::{
     Bound, PyErr, PyResult, Python, create_exception,
@@ -79,6 +79,61 @@ impl PyConfig {
         self.inner.max_concurrent_tunnels
     }
 }
+#[pyclass(name = "ClientEndpoint", frozen)]
+struct PyClientEndpoint {
+    local_addr: String,
+    websocket_url: String,
+    inner: Arc<tokio::sync::Mutex<Option<client::ClientEndpoint>>>,
+}
+
+#[pymethods]
+impl PyClientEndpoint {
+    #[staticmethod]
+    #[pyo3(signature = (local_addr, websocket_url, *, config = None))]
+    fn bind<'py>(
+        py: Python<'py>,
+        local_addr: String,
+        websocket_url: String,
+        config: Option<PyRef<'_, PyConfig>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let config = config
+            .map(|config| config.inner.clone())
+            .unwrap_or_default();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let endpoint = client::ClientEndpoint::bind(local_addr, websocket_url, config)
+                .await
+                .map_err(runtime_error)?;
+            let local_addr = endpoint.local_addr().to_string();
+            let websocket_url = endpoint.websocket_url().to_owned();
+            Ok(PyClientEndpoint {
+                local_addr,
+                websocket_url,
+                inner: Arc::new(tokio::sync::Mutex::new(Some(endpoint))),
+            })
+        })
+    }
+
+    #[getter]
+    fn local_addr(&self) -> &str {
+        &self.local_addr
+    }
+
+    #[getter]
+    fn websocket_url(&self) -> &str {
+        &self.websocket_url
+    }
+
+    fn shutdown<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let inner = Arc::clone(&self.inner);
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            if let Some(endpoint) = inner.lock().await.take() {
+                endpoint.shutdown().await.map_err(runtime_error)?;
+            }
+            Ok(())
+        })
+    }
+}
 
 #[pyfunction]
 #[pyo3(signature = (local_addr, websocket_url, *, config = None))]
@@ -121,6 +176,7 @@ fn run_server<'py>(
 #[pymodule]
 fn libwsrx(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyConfig>()?;
+    module.add_class::<PyClientEndpoint>()?;
     module.add("WSRXError", module.py().get_type::<WSRXError>())?;
     module.add_function(wrap_pyfunction!(run_client, module)?)?;
     module.add_function(wrap_pyfunction!(run_server, module)?)?;
