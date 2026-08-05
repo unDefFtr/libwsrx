@@ -52,15 +52,17 @@ libwsrx = { path = "../libwsrx" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
+Rust crate 目前不发布到 crates.io。
+
 ### Python
 
-项目要求 Python 3.9 或更新版本。在仓库根目录执行：
+项目要求 Python 3.9 或更新版本：
 
 ```console
 python -m pip install libwsrx
 ```
 
-这会安装预构建的原生扩展；如果当前平台没有可用的 wheel，pip 会从源码构建。开发环境从当前源码安装的完整准备方式见[开发指南](docs/development.md)。Rust crate 目前不发布到 crates.io。
+这会安装预构建的原生扩展；如果当前平台没有可用的 wheel，pip 会从源码构建。从当前源码准备开发环境，见[开发指南](docs/development.md)。
 
 ## 五分钟验证
 
@@ -110,76 +112,16 @@ curl --fail http://127.0.0.1:54321/
 
 将示例地址替换为实际打印的地址。响应由 `9100` 的 HTTP 服务返回，但请求路径是本地 TCP -> WebSocket -> 目标 TCP。按 `Ctrl-C` 停止程序和临时 HTTP 服务。
 
-## Rust 最小集成
+## 用户文档
 
-服务端绑定 WebSocket 入口，并把每条连接转发至固定目标：
+- [使用指南](docs/guide.md)：架构、数据流、嵌入方式与生命周期。
+- [部署指南](docs/deployment.md)：TLS、反向代理、安全边界、生产检查与排错。
+- [配置参考](docs/configuration.md)：所有限制、超时和调优建议。
+- [Rust API 参考](docs/rust-api.md)：全部公开 Rust API、资源所有权与错误。
+- [Python API 参考](docs/python-api.md)：asyncio API、关闭和异常契约。
+- [核心连接协议](docs/protocol.md)：Binary Message 数据面与互操作性规范。
 
-```rust
-use libwsrx::{server, Config};
-
-server::bind_and_serve(
-    "127.0.0.1:9000",
-    "127.0.0.1:9100".to_owned(),
-    Config::default(),
-)
-.await?;
-```
-
-客户端端点监听本地 TCP，并为每条入站连接创建 WebSocket：
-
-```rust
-use libwsrx::{client::ClientEndpoint, Config};
-
-let endpoint = ClientEndpoint::bind(
-    "127.0.0.1:0",
-    "ws://127.0.0.1:9000".to_owned(),
-    Config::default(),
-)
-.await?;
-
-println!("local endpoint: {}", endpoint.local_addr());
-// 在应用关闭时：endpoint.shutdown().await?;
-```
-
-两段代码都应运行在 Tokio 异步上下文中。若调用方已拥有 TCP 流或监听器，可选择 `client::connect`、`client::serve`、`server::accept` 或 `server::serve`；它们把连接与生命周期的所有权留给调用方。
-
-## Python API
-
-| API | 使用场景 |
-| --- | --- |
-| `await ClientEndpoint.bind(local_addr, websocket_url, *, config=None)` | 需要获取实际监听地址，并在关闭时显式等待端点结束。`127.0.0.1:0` 会分配随机端口。 |
-| `await endpoint.shutdown()` | 幂等地关闭该端点的监听器和活跃隧道。 |
-| `await run_client(local_addr, websocket_url, *, config=None)` | 简单的长期运行客户端；取消 asyncio task 即可停止。 |
-| `await run_server(websocket_addr, target_addr, *, config=None)` | 长期运行服务端；每条 WebSocket 都转发至同一个 `target_addr`。 |
-| `Config(...)` | 调整连接限制与超时。无效值抛出 `ValueError`。 |
-
-运行时错误会抛出 `libwsrx.WSRXError`；取消 awaitable 保持为 `asyncio.CancelledError`。
-
-## 配置
-
-`Config` 的默认值适合本地或受控环境。字段在 Rust 中为 `Config` 公共字段，在 Python 中为 `Config(...)` 的关键字参数。
-
-| 字段 | 默认值 | 含义 |
-| --- | ---: | --- |
-| `tcp_read_buffer_size` | 65,536 | 每次 TCP 读取、并生成出站 Binary Message 的最大字节数。 |
-| `max_websocket_message_size` | 67,108,864 | 单条 WebSocket Message 上限；可设为 `None` 取消限制。 |
-| `max_websocket_frame_size` | 16,777,216 | 单个 WebSocket Frame 上限；可设为 `None` 取消限制。 |
-| `connect_timeout` | 10 秒 | 客户端建立 WebSocket、服务端建立目标 TCP 的超时。 |
-| `handshake_timeout` | 10 秒 | 服务端完成 WebSocket 握手的超时。 |
-| `max_concurrent_tunnels` | 1,024 | 一个端点的最大活跃隧道数；达到上限时暂停接受新的连接。 |
-
-所有数值和时长均必须大于零。Python 时长以有限的浮点秒数表示；Rust 可调用 `Config::validate()` 提前校验。
-
-## 部署注意事项
-
-服务端目标地址来自启动参数，而非 WebSocket payload。这能避免客户端直接指定任意目标，但不等于完成访问控制。生产部署应在 Upgrade 前或外围代理中完成认证与授权，并为每个入口配置允许访问的固定目标。
-
-Rust 客户端可连接 `wss://`，使用系统原生根证书验证服务端。当前高层服务端 API 接收原始 TCP 连接，不终止 TLS；要提供 `wss://`，请在其前方放置反向代理或其他 TLS 终止层。还应由部署层设置连接时长和空闲超时，因为库没有这些策略。
-
-## 延伸阅读
-
-- [核心连接协议](docs/protocol.md)：数据编码、消息边界和连接生命周期。
-- [开发指南](docs/development.md)：构建、测试、质量检查和本地打包。
+维护、构建、测试与发布信息见[开发指南](docs/development.md)。
 
 ## 许可证
 

@@ -1,8 +1,8 @@
 # 开发指南
 
-[README](../README.md) · [核心连接协议](protocol.md)
+[README](../README.md) · [使用指南](guide.md) · [部署指南](deployment.md) · [配置参考](configuration.md) · [Rust API](rust-api.md) · [Python API](python-api.md) · [核心连接协议](protocol.md)
 
-本文说明如何在本地构建、测试和检查 `libwsrx`。除非另有说明，命令都从仓库根目录执行。
+本文是维护者文档，说明如何在本地构建、测试和检查 `libwsrx`。除非另有说明，命令都从仓库根目录执行。嵌入和部署库请从[使用指南](guide.md)开始。
 
 ## 环境要求
 
