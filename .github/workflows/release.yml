@@ -142,7 +142,7 @@ jobs:
 
   publish:
     if: needs.prepare.outputs.eligible == 'true'
-    needs: prepare
+    needs: [prepare, release]
     runs-on: ubuntu-latest
     environment:
       name: pypi

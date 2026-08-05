@@ -7,13 +7,35 @@ use tokio::{
     task::JoinHandle,
     time::timeout,
 };
-use tokio_tungstenite::connect_async_with_config;
+use tokio_tungstenite::{
+    connect_async_with_config,
+    tungstenite::{
+        Error as WebSocketError,
+        client::{IntoClientRequest, uri_mode},
+        error::UrlError,
+    },
+};
 
 use crate::{
     Config, Error, Result,
     endpoint::{serve_connections, serve_connections_until},
     relay,
 };
+
+fn validate_websocket_url(websocket_url: &str) -> Result<()> {
+    let request = websocket_url.into_client_request();
+    if websocket_url
+        .strip_prefix("ws://")
+        .or_else(|| websocket_url.strip_prefix("wss://"))
+        .is_some_and(|remainder| remainder.starts_with('/'))
+    {
+        return Err(WebSocketError::Url(UrlError::NoHostName).into());
+    }
+    let request = request?;
+    uri_mode(request.uri())?;
+    Ok(())
+}
+
 pub struct ClientEndpoint {
     local_addr: SocketAddr,
     websocket_url: String,
@@ -27,12 +49,14 @@ impl ClientEndpoint {
         A: ToSocketAddrs,
     {
         config.validate()?;
+        validate_websocket_url(&websocket_url)?;
         let listener = TcpListener::bind(listen_addr).await?;
         Self::start(listener, websocket_url, config)
     }
 
     pub fn start(listener: TcpListener, websocket_url: String, config: Config) -> Result<Self> {
         config.validate()?;
+        validate_websocket_url(&websocket_url)?;
         let local_addr = listener.local_addr()?;
         let max_concurrent_tunnels = config.max_concurrent_tunnels;
         let endpoint_url = websocket_url.clone();
@@ -96,6 +120,7 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
 {
     config.validate()?;
+    validate_websocket_url(websocket_url)?;
 
     let connect = connect_async_with_config(websocket_url, Some(config.websocket_config()), true);
     let (websocket, _) = timeout(config.connect_timeout, connect)
@@ -107,6 +132,7 @@ where
 
 pub async fn serve(listener: TcpListener, websocket_url: String, config: Config) -> Result<()> {
     config.validate()?;
+    validate_websocket_url(&websocket_url)?;
     let max_concurrent_tunnels = config.max_concurrent_tunnels;
 
     serve_connections(listener, max_concurrent_tunnels, move |tcp| {
@@ -122,6 +148,7 @@ where
     A: ToSocketAddrs,
 {
     config.validate()?;
+    validate_websocket_url(&websocket_url)?;
     let listener = TcpListener::bind(listen_addr).await?;
     serve(listener, websocket_url, config).await
 }

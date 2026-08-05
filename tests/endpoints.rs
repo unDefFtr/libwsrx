@@ -1,13 +1,20 @@
-use std::time::Duration;
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use futures_util::SinkExt;
 use libwsrx::{Config, Error, client, server};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf},
     net::{TcpListener, TcpStream},
     task::JoinSet,
 };
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{
+    client_async, connect_async,
+    tungstenite::{Error as WebSocketError, Message, error::UrlError},
+};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 const BANNER: &[u8] = b"BANNER\n";
@@ -43,6 +50,67 @@ async fn exchange_payload(stream: &mut TcpStream, payload: &[u8]) {
     let mut echoed = vec![0; payload.len()];
     stream.read_exact(&mut echoed).await.unwrap();
     assert_eq!(echoed, payload);
+}
+
+struct BlocksWritesAfterUpgrade {
+    inner: DuplexStream,
+    response: Vec<u8>,
+    upgraded: bool,
+}
+
+impl BlocksWritesAfterUpgrade {
+    fn new(inner: DuplexStream) -> Self {
+        Self {
+            inner,
+            response: Vec::new(),
+            upgraded: false,
+        }
+    }
+}
+
+impl AsyncRead for BlocksWritesAfterUpgrade {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(context, buffer)
+    }
+}
+
+impl AsyncWrite for BlocksWritesAfterUpgrade {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if self.upgraded {
+            return Poll::Pending;
+        }
+
+        match Pin::new(&mut self.inner).poll_write(context, buffer) {
+            Poll::Ready(Ok(written)) => {
+                self.response.extend_from_slice(&buffer[..written]);
+                self.upgraded = self.response.windows(4).any(|bytes| bytes == b"\r\n\r\n");
+                Poll::Ready(Ok(written))
+            }
+            result => result,
+        }
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(context)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(context)
+    }
 }
 
 #[tokio::test]
@@ -276,6 +344,69 @@ async fn times_out_an_idle_server_handshake() {
         result,
         Err(Error::WebSocketHandshakeTimeout(duration)) if duration == timeout_duration
     ));
+}
+
+#[tokio::test]
+async fn target_connect_failure_does_not_wait_for_websocket_close() {
+    let unavailable_target = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_addr = unavailable_target.local_addr().unwrap();
+    drop(unavailable_target);
+
+    let (server_transport, client_transport) = tokio::io::duplex(4096);
+    let accept_task = tokio::spawn(async move {
+        server::accept(
+            BlocksWritesAfterUpgrade::new(server_transport),
+            &target_addr.to_string(),
+            &Config::default(),
+        )
+        .await
+    });
+    let (client_websocket, _) = client_async("ws://localhost", client_transport)
+        .await
+        .unwrap();
+
+    let result = tokio::time::timeout(TEST_TIMEOUT, accept_task)
+        .await
+        .expect("target connect failure waited for WebSocket close")
+        .unwrap();
+    assert!(matches!(result, Err(Error::Io(_))));
+    drop(client_websocket);
+}
+
+#[tokio::test]
+async fn rejects_invalid_client_urls_before_accepting_connections() {
+    let unsupported_url = "http://127.0.0.1:80".to_owned();
+
+    let start_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    assert!(matches!(
+        client::ClientEndpoint::start(start_listener, unsupported_url.clone(), Config::default(),),
+        Err(Error::WebSocket(WebSocketError::Url(
+            UrlError::UnsupportedUrlScheme
+        )))
+    ));
+
+    let serve_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let serve_result = tokio::time::timeout(
+        Duration::from_millis(100),
+        client::serve(serve_listener, unsupported_url, Config::default()),
+    )
+    .await
+    .expect("invalid URL entered the accept loop");
+    assert!(matches!(
+        serve_result,
+        Err(Error::WebSocket(WebSocketError::Url(
+            UrlError::UnsupportedUrlScheme
+        )))
+    ));
+
+    let bind_result =
+        client::ClientEndpoint::bind("127.0.0.1:0", "ws:///path".to_owned(), Config::default())
+            .await;
+    match bind_result {
+        Err(Error::WebSocket(WebSocketError::Url(UrlError::NoHostName))) => {}
+        Err(error) => panic!("unexpected bind error: {error:?}"),
+        Ok(_) => panic!("invalid URL unexpectedly bound a client endpoint"),
+    }
 }
 
 #[tokio::test]

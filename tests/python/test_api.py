@@ -45,6 +45,8 @@ def test_api_exports_and_config_contract():
         "max_concurrent_tunnels",
     ):
         assert_value_error(**{field: 0})
+        assert_value_error(**{field: -1})
+        assert_value_error(**{field: 1 << 200})
     for field in ("connect_timeout", "handshake_timeout"):
         for value in (0.0, -1.0, math.inf, -math.inf, math.nan):
             assert_value_error(**{field: value})

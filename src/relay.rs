@@ -4,6 +4,7 @@ use tokio_tungstenite::{
     WebSocketStream,
     tungstenite::{
         Message,
+        error::CapacityError,
         protocol::{CloseFrame, frame::coding::CloseCode},
     },
 };
@@ -101,6 +102,13 @@ where
                     CloseCode::Protocol,
                     UNEXPECTED_FRAME_REASON,
                 );
+            }
+            Err(
+                error @ tokio_tungstenite::tungstenite::Error::Capacity(
+                    CapacityError::MessageTooLong { .. },
+                ),
+            ) => {
+                return Termination::with_close(error.into(), CloseCode::Size, "");
             }
             Err(error) => return Termination::error(error.into()),
         }

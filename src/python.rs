@@ -2,10 +2,10 @@ use std::{sync::Arc, time::Duration};
 
 use pyo3::{
     Bound, PyErr, PyResult, Python, create_exception,
-    exceptions::{PyException, PyValueError},
+    exceptions::{PyException, PyOverflowError, PyValueError},
     prelude::*,
+    pyclass::CompareOp,
     types::{PyAny, PyModule},
-    wrap_pyfunction,
 };
 
 use crate::{Config, Error, client, server};
@@ -30,12 +30,16 @@ impl PyConfig {
         max_concurrent_tunnels = 1_024,
     ))]
     fn new(
-        tcp_read_buffer_size: usize,
-        max_websocket_message_size: Option<usize>,
-        max_websocket_frame_size: Option<usize>,
+        #[pyo3(from_py_with = parse_tcp_read_buffer_size)] tcp_read_buffer_size: usize,
+        #[pyo3(from_py_with = parse_max_websocket_message_size)] max_websocket_message_size: Option<
+            usize,
+        >,
+        #[pyo3(from_py_with = parse_max_websocket_frame_size)] max_websocket_frame_size: Option<
+            usize,
+        >,
         connect_timeout: f64,
         handshake_timeout: f64,
-        max_concurrent_tunnels: usize,
+        #[pyo3(from_py_with = parse_max_concurrent_tunnels)] max_concurrent_tunnels: usize,
     ) -> PyResult<Self> {
         let inner = Config {
             tcp_read_buffer_size,
@@ -181,6 +185,49 @@ fn libwsrx(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(run_client, module)?)?;
     module.add_function(wrap_pyfunction!(run_server, module)?)?;
     Ok(())
+}
+
+fn parse_positive_usize(field: &'static str, value: &Bound<'_, PyAny>) -> PyResult<usize> {
+    if value.rich_compare(0, CompareOp::Le)?.is_truthy()? {
+        return Err(PyValueError::new_err(format!(
+            "{field} must be greater than zero"
+        )));
+    }
+
+    value.extract::<usize>().map_err(|error| {
+        if error.is_instance_of::<PyOverflowError>(value.py()) {
+            PyValueError::new_err(format!("{field} is too large to represent as usize"))
+        } else {
+            error
+        }
+    })
+}
+
+fn parse_optional_positive_usize(
+    field: &'static str,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<Option<usize>> {
+    if value.is_none() {
+        Ok(None)
+    } else {
+        parse_positive_usize(field, value).map(Some)
+    }
+}
+
+fn parse_tcp_read_buffer_size(value: &Bound<'_, PyAny>) -> PyResult<usize> {
+    parse_positive_usize("tcp_read_buffer_size", value)
+}
+
+fn parse_max_websocket_message_size(value: &Bound<'_, PyAny>) -> PyResult<Option<usize>> {
+    parse_optional_positive_usize("max_websocket_message_size", value)
+}
+
+fn parse_max_websocket_frame_size(value: &Bound<'_, PyAny>) -> PyResult<Option<usize>> {
+    parse_optional_positive_usize("max_websocket_frame_size", value)
+}
+
+fn parse_max_concurrent_tunnels(value: &Bound<'_, PyAny>) -> PyResult<usize> {
+    parse_positive_usize("max_concurrent_tunnels", value)
 }
 
 fn parse_duration(field: &'static str, seconds: f64) -> PyResult<Duration> {

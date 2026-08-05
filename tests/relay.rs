@@ -204,6 +204,11 @@ async fn enforces_custom_websocket_message_limit() {
         .send(Message::Binary(b"12345".as_slice().into()))
         .await
         .unwrap();
+    let close = within(websocket.next()).await.unwrap().unwrap();
+    let Message::Close(Some(frame)) = close else {
+        panic!("expected a close frame, got {close:?}");
+    };
+    assert_eq!(frame.code, CloseCode::Size);
 
     assert!(matches!(
         within(relay_task).await.unwrap(),
