@@ -1,3 +1,5 @@
+//! Server-side WebSocket acceptance and fixed-target TCP forwarding APIs.
+
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::{TcpListener, TcpStream, ToSocketAddrs},
@@ -7,6 +9,12 @@ use tokio_tungstenite::accept_async_with_config;
 
 use crate::{Config, Error, Result, endpoint::serve_connections, relay};
 
+/// Accepts one WebSocket transport, connects the fixed TCP target, and relays bytes.
+///
+/// # Errors
+///
+/// Returns an error for invalid configuration, handshake or target connection
+/// timeout, WebSocket failure, target TCP I/O failure, or relay protocol violation.
 pub async fn accept<T>(websocket_transport: T, target_addr: &str, config: &Config) -> Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -27,6 +35,13 @@ where
     relay(target, websocket, config).await
 }
 
+/// Serves a pre-bound WebSocket listener until failure or cancellation.
+///
+/// Individual tunnel failures are logged and do not stop the listener.
+///
+/// # Errors
+///
+/// Returns an error for invalid configuration or a listener accept failure.
 pub async fn serve(listener: TcpListener, target_addr: String, config: Config) -> Result<()> {
     config.validate()?;
     let max_concurrent_tunnels = config.max_concurrent_tunnels;
@@ -43,6 +58,12 @@ pub async fn serve(listener: TcpListener, target_addr: String, config: Config) -
     .await
 }
 
+/// Binds and serves a server-side WebSocket listener for a fixed TCP target.
+///
+/// # Errors
+///
+/// Returns an error for invalid configuration, listener binding, or a subsequent
+/// listener accept failure.
 pub async fn bind_and_serve<A>(listen_addr: A, target_addr: String, config: Config) -> Result<()>
 where
     A: ToSocketAddrs,

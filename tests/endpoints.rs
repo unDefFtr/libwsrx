@@ -5,7 +5,7 @@ use std::{
 };
 
 use futures_util::SinkExt;
-use libwsrx::{Config, Error, client, server};
+use libwsrx::{Config, Error, MAX_TCP_READ_BUFFER_SIZE, client, server};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf},
     net::{TcpListener, TcpStream},
@@ -495,4 +495,30 @@ fn rejects_every_zero_configuration_value() {
         .validate()
         .is_ok()
     );
+}
+
+#[test]
+fn validates_tcp_read_buffer_size_boundary() {
+    assert!(
+        Config {
+            tcp_read_buffer_size: MAX_TCP_READ_BUFFER_SIZE,
+            ..Config::default()
+        }
+        .validate()
+        .is_ok()
+    );
+
+    for tcp_read_buffer_size in [MAX_TCP_READ_BUFFER_SIZE + 1, usize::MAX] {
+        assert!(matches!(
+            Config {
+                tcp_read_buffer_size,
+                ..Config::default()
+            }
+            .validate(),
+            Err(Error::InvalidConfig {
+                field: "tcp_read_buffer_size",
+                reason: "must not exceed 16777216 bytes",
+            })
+        ));
+    }
 }

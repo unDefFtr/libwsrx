@@ -101,6 +101,33 @@ async fn preserves_bytes_across_message_boundaries_in_both_directions() {
 }
 
 #[tokio::test]
+async fn tcp_to_websocket_respects_configured_read_buffer_size() {
+    let config = Config {
+        tcp_read_buffer_size: 3,
+        ..Config::default()
+    };
+    let (mut tcp, mut websocket, relay_task) = relay_harness(config).await;
+    let expected = b"more than three bytes";
+
+    tcp.write_all(expected).await.unwrap();
+
+    let mut observed = Vec::new();
+    while observed.len() < expected.len() {
+        match within(websocket.next()).await.unwrap().unwrap() {
+            Message::Binary(payload) => {
+                assert!(payload.len() <= 3);
+                observed.extend_from_slice(&payload);
+            }
+            message => panic!("unexpected WebSocket message: {message:?}"),
+        }
+    }
+    assert_eq!(observed, expected);
+
+    websocket.close(None).await.unwrap();
+    assert!(within(relay_task).await.unwrap().is_ok());
+}
+
+#[tokio::test]
 async fn relays_both_directions_concurrently() {
     let (mut tcp, mut websocket, relay_task) = relay_harness(Config::default()).await;
     let tcp_payload = vec![0x5a; 32 * 1024];

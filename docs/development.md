@@ -85,6 +85,13 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 ```
 
+本地安全检查固定使用 `cargo-audit` 0.22.2：
+
+```console
+cargo install cargo-audit --locked --version 0.22.2
+cargo audit
+```
+
 修改 Python 绑定时，还应执行：
 
 ```console
@@ -132,7 +139,7 @@ python -m twine check --strict dist/*
 
 ## 发布
 
-每次 Push（分支和 Tag）都会触发 GitHub Actions 的 `Build` 工作流，构建并严格校验 5 个 wheel 和 1 个 sdist。成功的 Build 随后触发 `Release`：它读取该次 Build 的事件、引用和 SHA；只有严格匹配 Cargo 版本的 `v*` Tag Push 才会从该 Build 的精确 run ID 下载发行包、根据 `cliff.toml` 生成修改日志、创建 GitHub Release 并发布到 PyPI。Release 不会重新构建。不要手工创建或运行 Release，也不要使用 API token 或手工运行 `twine upload`。
+每次 Push（分支和 Tag）都会触发 GitHub Actions 的 `Build` 工作流。成功 Build 包含 Rust 格式检查、Clippy、完整 Rust tests、依赖审计、已安装 Python wheel tests，以及 5 个 wheel 和 1 个 sdist 的严格发行包校验。成功的 Build 随后触发 `Release`：它读取该次 Build 的事件、引用和 SHA；只有严格匹配 Cargo 版本的 `v*` Tag Push 才会从该 Build 的精确 run ID 下载发行包、根据 `cliff.toml` 生成修改日志、创建 GitHub Release 并发布到 PyPI。Release 不会重新构建或重复 QA。不要手工创建或运行 Release，也不要使用 API token 或手工运行 `twine upload`。
 
 首次发布前需要完成以下一次性设置：
 
@@ -163,7 +170,7 @@ python -m twine check --strict dist/*
    git push origin "v$VERSION"
    ```
 
-Tag Push 对应的 `Build` 要求标签严格等于 `v` 加 Cargo 版本；任一平台构建、wheel 安装测试、源码发行包构建或发行包校验失败都会阻止 `build-context` 上传和后续发布。成功后，`Release` 只消费该次成功 Tag Build 的 5 个 wheel 和 1 个 sdist；GitHub Release 会包含这些发行包和 git-cliff 生成的修改日志，PyPI 会收到同一组文件。PyPI 版本和 Git Tag 均不可覆盖，因此不要重复使用已经发布的版本号。
+Tag Push 对应的 `Build` 要求标签严格等于 `v` 加 Cargo 版本；任一平台构建、Rust fmt、Clippy、Rust tests、依赖审计、wheel 安装测试、源码发行包构建或发行包校验失败都会阻止 `build-context` 上传和后续发布。成功后，`Release` 只消费该次成功 Tag Build 的 5 个 wheel 和 1 个 sdist；GitHub Release 会包含这些发行包和 git-cliff 生成的修改日志，PyPI 会收到同一组文件。PyPI 版本和 Git Tag 均不可覆盖，因此不要重复使用已经发布的版本号。
 
 ## 常见问题
 

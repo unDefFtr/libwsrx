@@ -20,7 +20,7 @@ libwsrx.Config(
 )
 ```
 
-创建冻结配置对象。属性与关键字参数同名，可读取但不能修改。所有整数字段必须为正数并且可表示为 Rust `usize`；两项 WebSocket 大小字段也可设为 `None` 以取消对应限制。两个超时必须是有限且大于零的秒数。参数无效时构造函数抛出 `ValueError`。
+创建冻结配置对象。属性与关键字参数同名，可读取但不能修改。所有整数字段必须是真正的非 `bool` `int`、为正数并且可表示为 Rust `usize`；`tcp_read_buffer_size` 还不得超过 16,777,216 bytes。两项 WebSocket 大小字段也可设为 `None` 以取消对应限制。两个超时必须是有限且大于零的秒数。非整数或 `bool` 整数字段抛出 `TypeError`；零、负数、超出范围或非法 timeout 抛出 `ValueError`。
 
 完整字段说明、默认值和调优见[配置参考](configuration.md)。
 
@@ -39,7 +39,7 @@ libwsrx.Config(
 
 ### `await endpoint.shutdown()`
 
-停止该端点的监听器并等待活动隧道结束。它是幂等的：调用多次均成功并返回 `None`。端点关闭不会影响同一进程中的其他端点。需要可观察的端口和受控关闭时，优先使用 `ClientEndpoint`，而不是 `run_client`。
+停止接受新连接、取消活动隧道，并等待受管理任务终止。它是幂等的：调用多次均成功并返回 `None`。端点关闭不会影响同一进程中的其他端点。需要可观察的端口和受控关闭时，优先使用 `ClientEndpoint`，而不是 `run_client`。
 
 ```python
 import asyncio
@@ -85,6 +85,7 @@ finally:
 
 | 异常 | 何时出现 | 调用方处理 |
 | --- | --- | --- |
+| `TypeError` | 创建 `Config` 时整数字段不是 `int` 或为 `bool`。 | 传入真正的非 `bool` 整数。 |
 | `ValueError` | 创建 `Config` 时参数无效。 | 修正配置；不会开始网络操作。 |
 | `WSRXError` | 绑定、连接、WebSocket handshake、目标 TCP 连接、relay 或受管理端点关闭发生运行时错误。 | 记录错误，并根据应用协议决定重试、告警或停止。 |
 | `asyncio.CancelledError` | 调用方取消 `run_client`、`run_server`、`ClientEndpoint.bind` 或 `shutdown` 的 awaitable。 | 允许取消向上传播，或在应用关闭逻辑中显式处理。 |

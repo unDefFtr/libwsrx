@@ -1,3 +1,5 @@
+//! Client-side listener and outbound WebSocket connection APIs.
+
 use std::net::SocketAddr;
 
 use tokio::{
@@ -36,6 +38,11 @@ fn validate_websocket_url(websocket_url: &str) -> Result<()> {
     Ok(())
 }
 
+/// Managed client listener with explicit shutdown and observable bound address.
+///
+/// Calling [`ClientEndpoint::shutdown`] cancels active tunnels and waits for the
+/// management task. Dropping the value only signals shutdown and aborts that
+/// task; it does not wait for cleanup or report task errors.
 pub struct ClientEndpoint {
     local_addr: SocketAddr,
     websocket_url: String,
@@ -44,6 +51,12 @@ pub struct ClientEndpoint {
 }
 
 impl ClientEndpoint {
+    /// Binds a TCP listener and starts forwarding connections to a WebSocket URL.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid configuration or URL, listener binding or
+    /// address inspection failures, or endpoint startup failure.
     pub async fn bind<A>(listen_addr: A, websocket_url: String, config: Config) -> Result<Self>
     where
         A: ToSocketAddrs,
@@ -54,6 +67,12 @@ impl ClientEndpoint {
         Self::start(listener, websocket_url, config)
     }
 
+    /// Starts a managed endpoint from a pre-bound TCP listener.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid configuration or URL, or if the listener's
+    /// local address cannot be read.
     pub fn start(listener: TcpListener, websocket_url: String, config: Config) -> Result<Self> {
         config.validate()?;
         validate_websocket_url(&websocket_url)?;
@@ -82,14 +101,22 @@ impl ClientEndpoint {
         })
     }
 
+    /// Returns the TCP address actually bound by this endpoint.
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
     }
 
+    /// Returns the validated outbound WebSocket URL.
     pub fn websocket_url(&self) -> &str {
         &self.websocket_url
     }
 
+    /// Stops accepting connections, cancels active tunnels, and waits for the management task.
+    ///
+    /// # Errors
+    ///
+    /// Returns an endpoint task join error or an error returned by the managed
+    /// listener task.
     pub async fn shutdown(mut self) -> Result<()> {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
@@ -115,6 +142,12 @@ impl Drop for ClientEndpoint {
     }
 }
 
+/// Connects one TCP transport to an outbound WebSocket and relays bytes.
+///
+/// # Errors
+///
+/// Returns an error for invalid configuration or URL, connection timeout,
+/// WebSocket failure, TCP I/O failure, or relay protocol violation.
 pub async fn connect<T>(tcp: T, websocket_url: &str, config: &Config) -> Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -130,6 +163,13 @@ where
     relay(tcp, websocket, config).await
 }
 
+/// Serves a pre-bound TCP listener until failure or cancellation.
+///
+/// Individual tunnel failures are logged and do not stop the listener.
+///
+/// # Errors
+///
+/// Returns an error for invalid configuration or URL, or a listener accept failure.
 pub async fn serve(listener: TcpListener, websocket_url: String, config: Config) -> Result<()> {
     config.validate()?;
     validate_websocket_url(&websocket_url)?;
@@ -143,6 +183,12 @@ pub async fn serve(listener: TcpListener, websocket_url: String, config: Config)
     .await
 }
 
+/// Binds and serves a client-side TCP listener.
+///
+/// # Errors
+///
+/// Returns an error for invalid configuration or URL, listener binding, or a
+/// subsequent listener accept failure.
 pub async fn bind_and_serve<A>(listen_addr: A, websocket_url: String, config: Config) -> Result<()>
 where
     A: ToSocketAddrs,

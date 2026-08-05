@@ -60,7 +60,7 @@ flowchart LR
 | `serve` | 绑定并交出 `TcpListener` | 接受连接和管理隧道 |
 | `connect` / `accept` / `relay` | 创建并交出单条传输 | 该次调用期间的双向 relay 和 WebSocket 关闭 |
 
-Rust `ClientEndpoint` 被 drop 时会停止监听并中止其管理 task；需要等待清理完成、接收可能的端点错误时，应优先调用 `shutdown().await`。Python `ClientEndpoint.shutdown()` 可安全重复调用。长期 Python task 的推荐停止方式是取消 task 并 `await` 它，使 `asyncio.CancelledError` 由调用方处理。
+Rust 和 Python 的 `ClientEndpoint` shutdown 都会取消而非自然排空活动隧道，并等待受管理任务终止。Rust `ClientEndpoint` 被 drop 时会停止监听并中止其管理 task；需要等待清理完成、接收可能的端点错误时，应优先调用 `shutdown().await`。Python `ClientEndpoint.shutdown()` 可安全重复调用。长期 Python task 的推荐停止方式是取消 task 并 `await` 它，使 `asyncio.CancelledError` 由调用方处理。
 
 ## 运行边界
 

@@ -14,6 +14,15 @@ use crate::{Config, Error, Result};
 const UNSUPPORTED_TEXT_REASON: &str = "WSRX only accepts binary WebSocket messages";
 const UNEXPECTED_FRAME_REASON: &str = "WSRX received an unexpected raw WebSocket frame";
 
+/// Relays raw bytes bidirectionally between TCP and a WebSocket.
+///
+/// Only binary WebSocket messages carry data. Completion of either direction
+/// terminates the whole tunnel; TCP half-close is not preserved.
+///
+/// # Errors
+///
+/// Returns an error for invalid configuration, TCP or WebSocket transport
+/// failure, a text message, an unexpected raw frame, or a WebSocket size limit.
 pub async fn relay<T, W>(tcp: T, websocket: WebSocketStream<W>, config: &Config) -> Result<()>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -57,6 +66,7 @@ where
     T: AsyncRead + AsyncWrite + Unpin,
     W: AsyncRead + AsyncWrite + Unpin,
 {
+    // Each message owns its read allocation because the sink consumes it without returning a buffer.
     loop {
         let mut buffer = vec![0; buffer_size];
         let bytes_read = match tcp_read.read(&mut buffer).await {

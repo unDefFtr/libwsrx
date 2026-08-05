@@ -16,6 +16,13 @@ def assert_value_error(**kwargs):
         return
     raise AssertionError(f"Config accepted invalid arguments: {kwargs!r}")
 
+def assert_type_error(**kwargs):
+    try:
+        libwsrx.Config(**kwargs)
+    except TypeError:
+        return
+    raise AssertionError(f"Config accepted invalid argument types: {kwargs!r}")
+
 
 def test_api_exports_and_config_contract():
     assert {"ClientEndpoint", "Config", "WSRXError", "run_client", "run_server"} <= set(
@@ -47,6 +54,15 @@ def test_api_exports_and_config_contract():
         assert_value_error(**{field: 0})
         assert_value_error(**{field: -1})
         assert_value_error(**{field: 1 << 200})
+    assert_value_error(tcp_read_buffer_size=16_777_217)
+    for field in (
+        "tcp_read_buffer_size",
+        "max_websocket_message_size",
+        "max_websocket_frame_size",
+        "max_concurrent_tunnels",
+    ):
+        assert_type_error(**{field: True})
+        assert_type_error(**{field: False})
     for field in ("connect_timeout", "handshake_timeout"):
         for value in (0.0, -1.0, math.inf, -math.inf, math.nan):
             assert_value_error(**{field: value})

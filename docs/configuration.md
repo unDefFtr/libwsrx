@@ -8,14 +8,14 @@
 
 | 字段 | 默认值 | Rust 类型 / Python 类型 | 约束与作用 |
 | --- | ---: | --- | --- |
-| `tcp_read_buffer_size` | 65,536 bytes | `usize` / `int` | 必须大于零。每次从 TCP 读取的最大字节数，并作为一条出站 Binary Message 的最大读取块。 |
+| `tcp_read_buffer_size` | 65,536 bytes | `usize` / `int` | 必须为 1..=16,777,216 bytes。每次从 TCP 读取的最大字节数，并作为一条出站 Binary Message 的最大读取块。 |
 | `max_websocket_message_size` | 67,108,864 bytes | `Option<usize>` / `int | None` | 设置时必须大于零。收到的单条 WebSocket Message 上限；`None` 表示不限制。 |
 | `max_websocket_frame_size` | 16,777,216 bytes | `Option<usize>` / `int | None` | 设置时必须大于零。收到的单个 WebSocket frame 上限；`None` 表示不限制。 |
 | `connect_timeout` | 10 seconds | `Duration` / `float` | 必须大于零。客户端建立 WebSocket、服务端建立目标 TCP 的最长时间。 |
 | `handshake_timeout` | 10 seconds | `Duration` / `float` | 必须大于零。服务端完成 WebSocket Upgrade 的最长时间。 |
 | `max_concurrent_tunnels` | 1,024 | `usize` / `int` | 必须大于零。单个端点可同时处理的隧道数。到达上限时暂停接受新连接，直到已有隧道结束。 |
 
-Python 的 `connect_timeout` 和 `handshake_timeout` 必须是有限且大于零的浮点数。Python 整数字段必须能表示为 Rust `usize`。`None` 只允许用于两项 WebSocket 大小限制，不能用于读取块、超时或并发上限。
+Python 的 `connect_timeout` 和 `handshake_timeout` 必须是有限且大于零的浮点数。Python 整数字段必须是真正的非 `bool` `int`，并能表示为 Rust `usize`。`None` 只允许用于两项 WebSocket 大小限制，不能用于读取块、超时或并发上限。
 
 ## Rust 配置示例
 
@@ -52,7 +52,7 @@ config = libwsrx.Config(
 )
 ```
 
-`Config` 在 Python 中是冻结对象。传入零、负数、无限值、NaN 或超出 `usize` 范围的整数会在构造时抛出 `ValueError`。
+`Config` 在 Python 中是冻结对象。整数参数为非整数或 `bool` 时抛出 `TypeError`；传入零、负数、超出 `usize` 范围的整数、超过 16 MiB 的 TCP buffer，或非法 timeout 时抛出 `ValueError`。
 
 ## 调优原则
 

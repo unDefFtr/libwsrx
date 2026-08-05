@@ -2,10 +2,10 @@ use std::{sync::Arc, time::Duration};
 
 use pyo3::{
     Bound, PyErr, PyResult, Python, create_exception,
-    exceptions::{PyException, PyOverflowError, PyValueError},
+    exceptions::{PyException, PyOverflowError, PyTypeError, PyValueError},
     prelude::*,
     pyclass::CompareOp,
-    types::{PyAny, PyModule},
+    types::{PyAny, PyBool, PyModule},
 };
 
 use crate::{Config, Error, client, server};
@@ -188,6 +188,11 @@ fn libwsrx(module: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn parse_positive_usize(field: &'static str, value: &Bound<'_, PyAny>) -> PyResult<usize> {
+    if value.is_instance_of::<PyBool>() {
+        return Err(PyTypeError::new_err(format!(
+            "{field} must be an integer, not bool"
+        )));
+    }
     if value.rich_compare(0, CompareOp::Le)?.is_truthy()? {
         return Err(PyValueError::new_err(format!(
             "{field} must be greater than zero"
